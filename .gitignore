@@ -8,9 +8,14 @@ obj/
 # Test outputs
 test-output/
 my-test/
+my-test1/
 generic-test/
 test-yaml/
 output/
+testcase01-verify/
+testcase02-output/
+my-bonus-test/
+test-bonus-sort/
 
 # IDE and OS files
 .vs/
