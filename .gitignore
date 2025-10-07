@@ -1,0 +1,28 @@
+# .NET build artifacts
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# Test outputs
+test-output/
+my-test/
+generic-test/
+test-yaml/
+output/
+
+# IDE and OS files
+.vs/
+.vscode/
+.idea/
+.DS_Store
+*.user
+*.suo
+
+# Claude/AI artifacts
+.claude/
+
+# NuGet packages
+*.nupkg
+packages/
