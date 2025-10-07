@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -26,12 +27,12 @@ class ScriptUsageAnalyzer
             return;
         }
 
-        // Find all C# scripts and build GUID to path mapping
-        var allScripts = new Dictionary<string, ScriptInfo>();
-        var guidToScriptPath = new Dictionary<string, string>();
+        // Find all C# scripts and build GUID to path mapping (in parallel)
+        var allScripts = new ConcurrentDictionary<string, ScriptInfo>();
+        var guidToScriptPath = new ConcurrentDictionary<string, string>();
         var scriptFiles = Directory.GetFiles(assetsPath, "*.cs", SearchOption.AllDirectories);
 
-        foreach (var scriptFile in scriptFiles)
+        Parallel.ForEach(scriptFiles, scriptFile =>
         {
             var metaFile = scriptFile + ".meta";
             if (File.Exists(metaFile))
@@ -40,34 +41,38 @@ class ScriptUsageAnalyzer
                 if (!string.IsNullOrEmpty(guid))
                 {
                     var relativePath = GetRelativePath(scriptFile, _projectPath);
-                    allScripts[guid] = new ScriptInfo
+                    allScripts.TryAdd(guid, new ScriptInfo
                     {
                         Guid = guid,
                         Path = relativePath
-                    };
-                    guidToScriptPath[guid] = scriptFile;
+                    });
+                    guidToScriptPath.TryAdd(guid, scriptFile);
                 }
             }
-        }
+        });
 
         Console.WriteLine($"  Found {allScripts.Count} scripts");
 
-        // Extract script references with field information from scenes
-        var scriptReferences = new List<ScriptReference>();
+        // Extract script references with field information from scenes (in parallel)
+        var scriptReferences = new ConcurrentBag<ScriptReference>();
         var sceneFiles = Directory.GetFiles(assetsPath, "*.unity", SearchOption.AllDirectories);
 
-        foreach (var sceneFile in sceneFiles)
+        Parallel.ForEach(sceneFiles, sceneFile =>
         {
             var references = ExtractScriptReferencesFromScene(sceneFile);
-            scriptReferences.AddRange(references);
-        }
+            foreach (var reference in references)
+            {
+                scriptReferences.Add(reference);
+            }
+        });
 
         Console.WriteLine($"  Found {scriptReferences.Count} script references in scenes");
 
-        // Validate script usage with field validation
-        var usedGuids = new HashSet<string>();
+        // Validate script usage with field validation (in parallel with caching)
+        var usedGuids = new ConcurrentBag<string>();
+        var fieldNamesCache = new ConcurrentDictionary<string, List<string>>();
 
-        foreach (var reference in scriptReferences)
+        Parallel.ForEach(scriptReferences, reference =>
         {
             // Add owner script as used (it's referenced in scene)
             usedGuids.Add(reference.OwnerScriptGuid);
@@ -79,8 +84,11 @@ class ScriptUsageAnalyzer
                 // Get owner script file
                 if (guidToScriptPath.TryGetValue(reference.OwnerScriptGuid, out var ownerScriptPath))
                 {
-                    // Parse owner script to get field names
-                    var fieldNames = GetFieldNamesFromScript(ownerScriptPath);
+                    // Get field names (with caching to avoid re-parsing same script)
+                    var fieldNames = fieldNamesCache.GetOrAdd(ownerScriptPath, path =>
+                    {
+                        return GetFieldNamesFromScript(path);
+                    });
 
                     // Check if the field exists
                     if (fieldNames.Contains(reference.FieldName))
@@ -91,13 +99,14 @@ class ScriptUsageAnalyzer
                     // If field doesn't exist, target script is NOT marked as used (stale reference)
                 }
             }
-        }
+        });
 
-        Console.WriteLine($"  Found {usedGuids.Count} unique scripts actually used (after field validation)");
+        var uniqueUsedGuids = new HashSet<string>(usedGuids);
+        Console.WriteLine($"  Found {uniqueUsedGuids.Count} unique scripts actually used (after field validation)");
 
         // Find unused scripts
         var unusedScripts = allScripts.Values
-            .Where(script => !usedGuids.Contains(script.Guid))
+            .Where(script => !uniqueUsedGuids.Contains(script.Guid))
             .OrderBy(script => script.Path.Count(c => c == Path.DirectorySeparatorChar))
             .ThenBy(script => script.Path)
             .ToList();

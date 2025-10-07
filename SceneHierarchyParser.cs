@@ -24,10 +24,11 @@ class SceneHierarchyParser
 
         var sceneFiles = Directory.GetFiles(assetsPath, "*.unity", SearchOption.AllDirectories);
 
-        foreach (var sceneFile in sceneFiles)
+        // Parse scenes in parallel for better performance
+        Parallel.ForEach(sceneFiles, sceneFile =>
         {
             ParseScene(sceneFile);
-        }
+        });
     }
 
     private void ParseScene(string sceneFilePath)
